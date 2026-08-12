@@ -55,11 +55,11 @@ class ExcelBackend(ABC):
         ...
 
     @abstractmethod
-    def open_workbook(self, file_path: str) -> ExcelResult:
+    def open_workbook(self, file_path: str = "") -> ExcelResult:
         ...
 
     @abstractmethod
-    def create_workbook(self, file_path: str) -> ExcelResult:
+    def create_workbook(self, file_path: str = "") -> ExcelResult:
         ...
 
     @abstractmethod

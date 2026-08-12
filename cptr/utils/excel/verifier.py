@@ -252,28 +252,32 @@ class ExcelVerifier:
         title = args.get("title", "Chart")
 
         # OpenPyXL check
-        if hasattr(self.backend, "wb") and self.backend.wb:
-            target_sheet = self.backend.wb[sheet_name] if sheet_name and sheet_name in self.backend.wb.sheetnames else self.backend.wb.active
-            charts = getattr(target_sheet, "_charts", [])
-            if len(charts) > 0:
-                return VerificationResult(
-                    success=True,
-                    check_type="chart_verify",
-                    message=f"Chart '{title}' verified on sheet '{target_sheet.title}'. Total charts: {len(charts)}",
-                    actual=len(charts),
-                    expected=">=1 chart",
-                    duration_ms=(time.time() - t0) * 1000,
-                )
+        if getattr(self.backend, "backend_type", "") == "openpyxl" and getattr(self.backend, "wb", None):
+            wb = self.backend.wb
+            sheet_list = getattr(wb, "sheetnames", [])
+            target_sheet = wb[sheet_name] if sheet_name and sheet_name in sheet_list else getattr(wb, "active", None)
+            if target_sheet:
+                charts = getattr(target_sheet, "_charts", [])
+                if len(charts) > 0:
+                    return VerificationResult(
+                        success=True,
+                        check_type="chart_verify",
+                        message=f"Chart '{title}' verified on sheet '{getattr(target_sheet, 'title', '')}'. Total charts: {len(charts)}",
+                        actual=len(charts),
+                        expected=">=1 chart",
+                        duration_ms=(time.time() - t0) * 1000,
+                    )
 
         # Win32COM check
-        if hasattr(self.backend, "sheet") and self.backend.sheet:
+        if getattr(self.backend, "backend_type", "") == "win32com" and getattr(self.backend, "wb", None):
             try:
-                count = self.backend.sheet.ChartObjects().Count
+                ws = self.backend.wb.Worksheets(sheet_name) if sheet_name else self.backend.wb.ActiveSheet
+                count = ws.ChartObjects().Count
                 if count > 0:
                     return VerificationResult(
                         success=True,
                         check_type="chart_verify",
-                        message=f"COM Chart verified. Count: {count}",
+                        message=f"Live Excel Chart '{title}' verified on sheet '{ws.Name}'. Total charts: {count}",
                         actual=count,
                         expected=">=1 chart",
                         duration_ms=(time.time() - t0) * 1000,

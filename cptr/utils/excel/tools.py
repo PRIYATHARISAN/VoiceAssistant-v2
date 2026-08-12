@@ -9,32 +9,75 @@ from cptr.utils.excel.backend_base import ExcelResult
 from cptr.utils.excel.session import get_excel_session
 
 
+def _ensure_active_session_workbook(session, __context__: dict):
+    ws_dir = __context__.get("workspace", "")
+    backend = session.ensure_backend(workspace=ws_dir)
+    if not session.active_workbook_path:
+        info = backend.get_workbook_info()
+        if info.success and info.workbook:
+            session.active_workbook_path = info.workbook
+        else:
+            create_res = backend.create_workbook()
+            if create_res.success:
+                session.active_workbook_path = create_res.workbook or "Workbook1.xlsx"
+    return backend
+
+
 async def excel_open_workbook(
-    file_path: str,
-    live_mode: bool = False,
+    file_path: str = "",
+    live_mode: bool | None = None,
     *,
     __context__: dict,
 ) -> str:
-    """Open an Excel workbook file into session state.
+    """Open Microsoft Excel desktop application or an Excel workbook file into session state.
 
-    :param file_path: Path to Excel workbook file (.xlsx).
+    :param file_path: Optional path to Excel workbook file (.xlsx). If empty, launches or focuses live Microsoft Excel application.
     :param live_mode: Set True to connect to live Microsoft Excel desktop application via COM.
     """
     session = get_excel_session(__context__)
     ws_dir = __context__.get("workspace", "")
-    full_path = file_path if os.path.isabs(file_path) else os.path.join(ws_dir, file_path) if ws_dir else file_path
+    full_path = ""
+    if file_path:
+        full_path = file_path if os.path.isabs(file_path) else os.path.join(ws_dir, file_path) if ws_dir else file_path
+        if not os.path.exists(full_path):
+            backend = session.ensure_backend(full_path, live_mode=live_mode, workspace=ws_dir)
+            res = backend.create_workbook(full_path)
+            if res.success:
+                session.active_workbook_path = full_path
+            return res.to_json()
 
-    if not os.path.exists(full_path):
-        # Automatically create if file doesn't exist
-        backend = session.ensure_backend(full_path, live_mode=live_mode, workspace=ws_dir)
-        res = backend.create_workbook(full_path)
-        session.active_workbook_path = full_path
-        return res.to_json()
-
-    backend = session.ensure_backend(full_path, live_mode=live_mode, workspace=ws_dir)
+    backend = session.ensure_backend(full_path if full_path else None, live_mode=live_mode, workspace=ws_dir)
     res = backend.open_workbook(full_path)
-    if res.success:
+    if res.success and full_path:
         session.active_workbook_path = full_path
+    elif res.success and res.workbook:
+        session.active_workbook_path = res.workbook
+    return res.to_json()
+
+
+async def excel_create_workbook(
+    file_path: str = "",
+    live_mode: bool | None = None,
+    *,
+    __context__: dict,
+) -> str:
+    """Create a new blank Excel workbook in the live Microsoft Excel desktop application.
+
+    :param file_path: Optional path to save the new workbook file (.xlsx). If omitted, an unsaved new workbook is created in live Excel.
+    :param live_mode: Set True to force live Microsoft Excel application via COM.
+    """
+    session = get_excel_session(__context__)
+    ws_dir = __context__.get("workspace", "")
+    full_path = ""
+    if file_path:
+        full_path = file_path if os.path.isabs(file_path) else os.path.join(ws_dir, file_path) if ws_dir else file_path
+
+    backend = session.ensure_backend(full_path if full_path else None, live_mode=live_mode, workspace=ws_dir)
+    res = backend.create_workbook(full_path)
+    if res.success and full_path:
+        session.active_workbook_path = full_path
+    elif res.success and res.workbook:
+        session.active_workbook_path = res.workbook
     return res.to_json()
 
 
@@ -48,9 +91,7 @@ async def excel_get_workbook_info(
     :param workbook_name: Optional name of workbook (defaults to currently open session workbook).
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="get_workbook_info", message="No active workbook open in session.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.get_workbook_info().to_json()
 
 
@@ -64,9 +105,7 @@ async def excel_save_workbook(
     :param file_path: Optional target file path (if saving as new copy).
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="save_workbook", message="No active workbook open in session.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     target = None
     if file_path:
         ws_dir = __context__.get("workspace", "")
@@ -97,9 +136,7 @@ async def excel_list_sheets(
     :param workbook_name: Optional workbook name filter.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="list_sheets", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.list_sheets().to_json()
 
 
@@ -115,9 +152,7 @@ async def excel_create_sheet(
     :param index: Optional position index where sheet should be inserted.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="create_sheet", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.create_sheet(sheet_name, index=index).to_json()
 
 
@@ -142,10 +177,8 @@ async def excel_delete_sheet(
         ).to_json()
 
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="delete_sheet", message="No active workbook open.").to_json()
+    backend = _ensure_active_session_workbook(session, __context__)
     backup_path = session.create_backup()
-    backend = session.ensure_backend()
     res = backend.delete_sheet(sheet_name)
     if backup_path:
         res.backup_path = backup_path
@@ -164,9 +197,7 @@ async def excel_rename_sheet(
     :param new_name: New worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="rename_sheet", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.rename_sheet(old_name, new_name).to_json()
 
 
@@ -180,9 +211,7 @@ async def excel_get_sheet_info(
     :param sheet_name: Optional worksheet name (defaults to active sheet).
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="get_sheet_info", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.get_sheet_info(sheet_name).to_json()
 
 
@@ -200,9 +229,7 @@ async def excel_read_range(
     :param max_rows: Maximum rows to return (default 100).
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="read_range", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.read_range(cell_range=cell_range, sheet_name=sheet_name, max_rows=max_rows).to_json()
 
 
@@ -220,9 +247,7 @@ async def excel_write_range(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="write_range", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.write_range(data=data, start_cell=start_cell, sheet_name=sheet_name).to_json()
 
 
@@ -240,9 +265,7 @@ async def excel_update_cell(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="update_cell", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.update_cell(cell=cell, value=value, sheet_name=sheet_name).to_json()
 
 
@@ -258,9 +281,7 @@ async def excel_append_rows(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="append_rows", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.append_rows(rows=rows, sheet_name=sheet_name).to_json()
 
 
@@ -287,10 +308,8 @@ async def excel_clear_range(
         ).to_json()
 
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="clear_range", message="No active workbook open.").to_json()
+    backend = _ensure_active_session_workbook(session, __context__)
     backup_path = session.create_backup()
-    backend = session.ensure_backend()
     res = backend.clear_range(cell_range=cell_range, sheet_name=sheet_name)
     if backup_path:
         res.backup_path = backup_path
@@ -311,9 +330,7 @@ async def excel_search_sheet(
     :param max_results: Maximum cell matches to return.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="search_sheet", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.search_sheet(query=query, sheet_name=sheet_name, max_results=max_results).to_json()
 
 
@@ -335,9 +352,7 @@ async def excel_sort_range(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="sort_range", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.sort_range(
         cell_range=cell_range,
         key_column=key_column,
@@ -363,9 +378,7 @@ async def excel_filter_range(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="filter_range", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.filter_range(
         cell_range=cell_range,
         column_index=column_index,
@@ -388,9 +401,7 @@ async def excel_write_formula(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="write_formula", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.write_formula(cell=cell, formula=formula, sheet_name=sheet_name).to_json()
 
 
@@ -426,9 +437,7 @@ async def excel_format_range(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="format_range", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.format_range(
         cell_range=cell_range,
         font_name=font_name,
@@ -463,9 +472,7 @@ async def excel_create_chart(
     :param sheet_name: Optional target worksheet name.
     """
     session = get_excel_session(__context__)
-    if not session.active_workbook_path:
-        return ExcelResult(success=False, operation="create_chart", message="No active workbook open.").to_json()
-    backend = session.ensure_backend()
+    backend = _ensure_active_session_workbook(session, __context__)
     return backend.create_chart(
         cell_range=cell_range,
         chart_type=chart_type,
