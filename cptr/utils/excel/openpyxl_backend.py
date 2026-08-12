@@ -90,7 +90,19 @@ class OpenPyXLBackend(ExcelBackend):
             raise ValueError(f"Sheet '{name}' not found in workbook.")
         return self.wb[name]
 
-    def open_workbook(self, file_path: str) -> ExcelResult:
+    def open_workbook(self, file_path: str = "") -> ExcelResult:
+        if not file_path:
+            if self.wb is None:
+                self.wb = openpyxl.Workbook()
+                self.active_sheet_name = self.wb.active.title
+            return ExcelResult(
+                success=True,
+                operation="open_workbook",
+                workbook=os.path.basename(self.file_path) if self.file_path else "Workbook1.xlsx",
+                sheet=self.active_sheet_name,
+                message="Opened in-memory Excel workbook.",
+                data={"sheets": self.wb.sheetnames, "active_sheet": self.active_sheet_name},
+            )
         if not os.path.exists(file_path):
             return ExcelResult(
                 success=False,
@@ -118,18 +130,19 @@ class OpenPyXLBackend(ExcelBackend):
                 message=f"Error opening workbook: {exc}",
             )
 
-    def create_workbook(self, file_path: str) -> ExcelResult:
+    def create_workbook(self, file_path: str = "") -> ExcelResult:
         try:
             self.file_path = file_path
             self.wb = openpyxl.Workbook()
             self.active_sheet_name = self.wb.active.title
-            self.wb.save(file_path)
+            if file_path:
+                self.wb.save(file_path)
             return ExcelResult(
                 success=True,
                 operation="create_workbook",
-                workbook=os.path.basename(file_path),
+                workbook=os.path.basename(file_path) if file_path else "Workbook1.xlsx",
                 sheet=self.active_sheet_name,
-                message=f"Created new workbook at '{file_path}'.",
+                message=f"Created new workbook at '{file_path}'." if file_path else "Created new in-memory workbook.",
             )
         except Exception as exc:
             return ExcelResult(

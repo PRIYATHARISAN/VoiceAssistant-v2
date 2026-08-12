@@ -37,8 +37,13 @@ class BackupManager:
             shutil.copy2(self.original_path, self.working_copy_path)
             logger.info(f"[BackupManager] Created working copy '{self.working_copy_path}' from '{self.original_path}'")
         except Exception as exc:
-            logger.warning(f"[BackupManager] Failed to create working copy: {exc}")
-            self.working_copy_path = self.original_path
+            try:
+                with open(self.original_path, "rb") as src, open(self.working_copy_path, "wb") as dst:
+                    dst.write(src.read())
+                logger.info(f"[BackupManager] Created working copy via stream '{self.working_copy_path}'")
+            except Exception:
+                logger.warning(f"[BackupManager] Failed to create working copy: {exc}")
+                self.working_copy_path = self.original_path
         return self.working_copy_path
 
     def create_snapshot(self) -> str | None:

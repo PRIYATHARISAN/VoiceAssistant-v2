@@ -60,7 +60,21 @@ class Win32COMBackend(ExcelBackend):
                 return False
         return True
 
-    def open_workbook(self, file_path: str) -> ExcelResult:
+    def _ensure_workbook(self) -> bool:
+        if not self._ensure_excel():
+            return False
+        if self.wb is None:
+            try:
+                if self.excel_app.Workbooks.Count > 0:
+                    self.wb = self.excel_app.ActiveWorkbook
+                else:
+                    self.wb = self.excel_app.Workbooks.Add()
+            except Exception as exc:
+                logger.warning(f"[Win32COM] Could not connect or add active workbook: {exc}")
+                return False
+        return True
+
+    def open_workbook(self, file_path: str = "") -> ExcelResult:
         if not self._ensure_excel():
             return ExcelResult(
                 success=False,
@@ -68,9 +82,52 @@ class Win32COMBackend(ExcelBackend):
                 message="Live Microsoft Excel COM automation is unavailable on this machine.",
             )
         try:
+            if self.excel_app:
+                self.excel_app.DisplayAlerts = False
+
+            if not file_path:
+                if self.excel_app.Workbooks.Count > 0:
+                    self.wb = self.excel_app.ActiveWorkbook
+                else:
+                    self.wb = self.excel_app.Workbooks.Add()
+                self.excel_app.Visible = True
+                return ExcelResult(
+                    success=True,
+                    operation="open_workbook",
+                    workbook=self.wb.Name if self.wb else "Excel.Application",
+                    sheet=self.wb.ActiveSheet.Name if self.wb and self.wb.ActiveSheet else "",
+                    message=f"Opened live Microsoft Excel application (Workbook: '{self.wb.Name if self.wb else 'None'}').",
+                )
+
             abs_path = os.path.abspath(file_path)
+
+            # Handle existing open workbooks with the same filename in live Excel
+            target_filename = os.path.basename(abs_path).lower()
+            try:
+                for open_wb in list(self.excel_app.Workbooks):
+                    if open_wb.Name.lower() == target_filename:
+                        try:
+                            if os.path.abspath(open_wb.FullName).lower() == abs_path.lower():
+                                self.wb = open_wb
+                                self.file_path = abs_path
+                                self.excel_app.Visible = True
+                                return ExcelResult(
+                                    success=True,
+                                    operation="open_workbook",
+                                    workbook=self.wb.Name,
+                                    sheet=self.wb.ActiveSheet.Name,
+                                    message=f"Workbook '{self.wb.Name}' is active in live Excel application.",
+                                )
+                            else:
+                                open_wb.Close(SaveChanges=False)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             self.wb = self.excel_app.Workbooks.Open(abs_path)
             self.file_path = abs_path
+            self.excel_app.Visible = True
             return ExcelResult(
                 success=True,
                 operation="open_workbook",
@@ -79,9 +136,10 @@ class Win32COMBackend(ExcelBackend):
                 message=f"Opened workbook '{self.wb.Name}' in live Excel application.",
             )
         except Exception as exc:
+            logger.warning(f"[Win32COM] open_workbook failed for '{file_path}': {exc}")
             return ExcelResult(success=False, operation="open_workbook", message=f"COM error: {exc}")
 
-    def create_workbook(self, file_path: str) -> ExcelResult:
+    def create_workbook(self, file_path: str = "") -> ExcelResult:
         if not self._ensure_excel():
             return ExcelResult(
                 success=False,
@@ -90,9 +148,13 @@ class Win32COMBackend(ExcelBackend):
             )
         try:
             self.wb = self.excel_app.Workbooks.Add()
-            abs_path = os.path.abspath(file_path)
-            self.wb.SaveAs(abs_path)
-            self.file_path = abs_path
+            if file_path:
+                abs_path = os.path.abspath(file_path)
+                self.wb.SaveAs(abs_path)
+                self.file_path = abs_path
+            else:
+                self.file_path = ""
+            self.excel_app.Visible = True
             return ExcelResult(
                 success=True,
                 operation="create_workbook",
@@ -104,7 +166,7 @@ class Win32COMBackend(ExcelBackend):
             return ExcelResult(success=False, operation="create_workbook", message=f"COM error: {exc}")
 
     def get_workbook_info(self) -> ExcelResult:
-        if self.wb is None:
+        if not self._ensure_workbook() or self.wb is None:
             return ExcelResult(success=False, operation="get_workbook_info", message="No live workbook open.")
         return ExcelResult(
             success=True,
@@ -115,15 +177,24 @@ class Win32COMBackend(ExcelBackend):
         )
 
     def save_workbook(self, target_path: str | None = None) -> ExcelResult:
-        if self.wb is None:
+        if not self._ensure_workbook() or self.wb is None:
             return ExcelResult(success=False, operation="save_workbook", message="No live workbook open.")
         try:
+            if self.excel_app:
+                self.excel_app.DisplayAlerts = False
             if target_path:
                 abs_path = os.path.abspath(target_path)
-                self.wb.SaveAs(abs_path)
+                ext = os.path.splitext(abs_path)[1].lower()
+                fmt = 51 if ext == ".xlsx" else 52 if ext == ".xlsm" else 56 if ext == ".xls" else None
+                if fmt:
+                    self.wb.SaveAs(abs_path, FileFormat=fmt)
+                else:
+                    self.wb.SaveAs(abs_path)
                 self.file_path = abs_path
             else:
                 self.wb.Save()
+            if self.excel_app:
+                self.excel_app.DisplayAlerts = True
             return ExcelResult(
                 success=True,
                 operation="save_workbook",
@@ -136,9 +207,14 @@ class Win32COMBackend(ExcelBackend):
     def close_workbook(self) -> ExcelResult:
         if self.wb is not None:
             try:
-                self.wb.Close(SaveChanges=True)
-            except Exception:
-                pass
+                if self.excel_app:
+                    self.excel_app.DisplayAlerts = False
+                has_file = bool(self.file_path and os.path.exists(self.file_path))
+                self.wb.Close(SaveChanges=has_file)
+                if self.excel_app:
+                    self.excel_app.DisplayAlerts = True
+            except Exception as exc:
+                logger.warning(f"[Win32COM] Error closing workbook: {exc}")
             self.wb = None
         return ExcelResult(success=True, operation="close_workbook", message="Closed live workbook.")
 

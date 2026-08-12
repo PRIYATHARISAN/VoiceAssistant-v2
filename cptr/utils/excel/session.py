@@ -28,7 +28,7 @@ class ExcelSession:
     def ensure_backend(
         self,
         file_path: str | None = None,
-        live_mode: bool = False,
+        live_mode: bool | None = None,
         workspace: str = "",
     ) -> ExcelBackend:
         """Get or initialize the backend for this session."""
@@ -38,7 +38,12 @@ class ExcelSession:
         if target_path and not os.path.isabs(target_path) and workspace:
             target_path = os.path.join(workspace, target_path)
 
-        if live_mode:
+        if live_mode is None:
+            use_live = is_win32com_available()
+        else:
+            use_live = live_mode
+
+        if use_live:
             if not is_win32com_available():
                 logger.warning("[ExcelSession] Win32COM requested but unavailable. Falling back to OpenPyXL.")
                 if self.backend is None or not isinstance(self.backend, OpenPyXLBackend):
