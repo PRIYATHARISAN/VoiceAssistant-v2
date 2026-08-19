@@ -2,7 +2,7 @@
 name = "cptr"
 version = "0.9.21"
 description = "Your computer, from anywhere. Code, manage, and control your machine from the web."
-license = {file = "LICENSE"}
+license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -54,7 +54,6 @@ packages = ["cptr"]
 exclude = ["cptr/frontend"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"CHANGELOG.md" = "cptr/CHANGELOG.md"
 "cptr/frontend/build" = "cptr/frontend/build"
 
 [tool.ruff]
