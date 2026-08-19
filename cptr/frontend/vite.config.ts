@@ -7,16 +7,16 @@ export default defineConfig({
 	server: {
 		proxy: {
 			'/api': {
-				target: 'http://localhost:9741',
+				target: 'http://127.0.0.1:8000',
 				changeOrigin: true,
 				ws: true
 			},
 			'/v1': {
-				target: 'http://localhost:9741',
+				target: 'http://127.0.0.1:8000',
 				changeOrigin: true
 			},
 			'/socket.io': {
-				target: 'http://localhost:9741',
+				target: 'http://127.0.0.1:8000',
 				changeOrigin: true,
 				ws: true
 			}
