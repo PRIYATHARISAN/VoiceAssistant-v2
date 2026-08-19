@@ -1870,7 +1870,7 @@ async def run_chat_task(
         user_text = str(user_message.content or "") if user_message else ""
         is_open_request = bool(
             re.match(
-                r"^\s*(?:please\s+)?(?:open|launch|start)\s+(?:an?\s+)?(?:microsoft\s+)?excel(?:\s|$)",
+                r"^\s*(?:please\s+)?(?:open|launch|start)\s+(?:an?\s+)?(?:microsoft\s+)?(?:excel|work\s*book|excel\s+work\s*book)(?:\s|$)",
                 user_text,
                 re.IGNORECASE,
             )

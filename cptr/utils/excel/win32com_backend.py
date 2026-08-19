@@ -71,6 +71,34 @@ class Win32COMBackend(ExcelBackend):
             logger.warning("[Win32COM] Could not focus Excel window: %s", exc)
         return 0
 
+    def _launch_excel_desktop(self) -> int:
+        """Launch Excel as a persistent interactive Windows application."""
+        if not IS_WINDOWS:
+            return 0
+        try:
+            os.startfile("excel.exe")  # type: ignore[attr-defined]
+            import win32gui
+
+            found = 0
+            for _ in range(30):
+                def on_window(hwnd, _extra):
+                    nonlocal found
+                    if found or not win32gui.IsWindowVisible(hwnd):
+                        return
+                    try:
+                        if win32gui.GetClassName(hwnd) == "XLMAIN":
+                            found = int(hwnd)
+                    except Exception:
+                        pass
+
+                win32gui.EnumWindows(on_window, None)
+                if found:
+                    return found
+                time.sleep(0.2)
+        except Exception as exc:
+            logger.warning("[Win32COM] Could not launch desktop Excel: %s", exc)
+        return 0
+
     def _ensure_excel(self) -> bool:
         if not is_win32com_available():
             return False
@@ -115,15 +143,7 @@ class Win32COMBackend(ExcelBackend):
         return True
 
     def open_workbook(self, file_path: str = "") -> ExcelResult:
-        if not file_path and IS_WINDOWS:
-            # Start Excel through the interactive Windows shell first. COM
-            # automation alone can create an invisible server process when
-            # the assistant is running headlessly, which is not useful to the
-            # person who asked to open Excel.
-            try:
-                os.startfile("excel.exe")  # type: ignore[attr-defined]
-            except OSError as exc:
-                logger.warning("[Win32COM] Windows could not start Excel: %s", exc)
+        desktop_hwnd = self._launch_excel_desktop() if not file_path else 0
         if not self._ensure_excel():
             return ExcelResult(
                 success=False,
@@ -141,6 +161,7 @@ class Win32COMBackend(ExcelBackend):
                     self.wb = self.excel_app.Workbooks.Add()
                 self.excel_app.Visible = True
                 hwnd = self._focus_excel_window()
+                hwnd = hwnd or desktop_hwnd
                 if not hwnd:
                     return ExcelResult(
                         success=False,
