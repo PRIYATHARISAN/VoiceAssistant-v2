@@ -11,6 +11,7 @@ from cptr.utils.excel.backend_base import ExcelResult
 from cptr.utils.excel.openpyxl_backend import OpenPyXLBackend
 from cptr.utils.excel.session import ExcelSession, get_excel_session
 from cptr.utils.excel.win32com_backend import is_win32com_available
+from cptr.utils.excel.win32com_backend import Win32COMBackend
 from cptr.utils.excel import EXCEL_TOOLS
 from cptr.utils.tools import execute_tool, get_tool_list
 
@@ -44,6 +45,20 @@ class TestPhase1SessionBackendSelection(unittest.TestCase):
         session = ExcelSession("test_session_explicit_false")
         backend = session.ensure_backend(live_mode=False)
         self.assertIsInstance(backend, OpenPyXLBackend)
+
+    @patch("cptr.utils.excel.win32com_backend.is_win32com_available", return_value=True)
+    def test_hidden_active_excel_is_replaced_with_visible_instance(self, _mock_available):
+        """A hidden COM singleton must not swallow the user's open request."""
+        import win32com.client
+
+        hidden = MagicMock(Hwnd=0, Visible=False)
+        visible = MagicMock(Hwnd=1234, Visible=True)
+        with patch.object(win32com.client, "GetActiveObject", return_value=hidden), \
+             patch.object(win32com.client, "DispatchEx", return_value=visible) as dispatch_ex:
+            backend = Win32COMBackend()
+            self.assertTrue(backend._ensure_excel())
+            dispatch_ex.assert_called_once_with("Excel.Application")
+            self.assertIs(backend.excel_app, visible)
 
 
 class TestPhase1ExcelToolsUnit(unittest.TestCase):

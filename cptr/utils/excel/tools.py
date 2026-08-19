@@ -7,6 +7,7 @@ from typing import Any, List, Literal, Optional
 
 from cptr.utils.excel.backend_base import ExcelResult
 from cptr.utils.excel.session import get_excel_session
+from cptr.utils.excel.win32com_backend import is_win32com_available
 
 
 def _ensure_active_session_workbook(session, __context__: dict):
@@ -46,7 +47,26 @@ async def excel_open_workbook(
                 session.active_workbook_path = full_path
             return res.to_json()
 
-    backend = session.ensure_backend(full_path if full_path else None, live_mode=live_mode, workspace=ws_dir)
+    # An empty path means "open the desktop Excel application", not "create
+    # an in-memory workbook". Never report success from the OpenPyXL fallback
+    # for that request; it makes Kural claim Excel is open when no window exists.
+    requested_live = True if not full_path and live_mode is None else live_mode
+    if not full_path and requested_live and not is_win32com_available():
+        return ExcelResult(
+            success=False,
+            operation="open_workbook",
+            message="Live Microsoft Excel is unavailable. Install pywin32 and run Kural in the Windows desktop session.",
+        ).to_json()
+
+    backend = session.ensure_backend(
+        full_path if full_path else None, live_mode=requested_live, workspace=ws_dir
+    )
+    if not full_path and not backend.is_live_mode:
+        return ExcelResult(
+            success=False,
+            operation="open_workbook",
+            message="The desktop Excel application could not be selected; no workbook was opened.",
+        ).to_json()
     res = backend.open_workbook(full_path)
     if res.success and full_path:
         session.active_workbook_path = full_path

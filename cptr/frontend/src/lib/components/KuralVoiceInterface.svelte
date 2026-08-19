@@ -35,6 +35,9 @@
 	let animFrame = $state<number | null>(null);
 	let showTranscriptModal = $state(false);
 	let conversationLog = $state<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
+	let fallbackRecorder: MediaRecorder | null = null;
+	let fallbackStream: MediaStream | null = null;
+	let fallbackChunks: Blob[] = [];
 
 	$effect(() => {
 		if (activeChatId && !activeChatId.startsWith('new-') && !activeChatId.startsWith('pending-')) {
@@ -62,7 +65,7 @@
 	});
 
 	onDestroy(() => {
-		stopListening();
+		stopListening(false);
 		stopTtsPlayback();
 		if (animFrame) cancelAnimationFrame(animFrame);
 		if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
@@ -216,16 +219,74 @@
 			} catch (e) {
 				// Already started
 			}
+			return;
+		}
+
+		// Firefox/Electron and some embedded browsers do not expose
+		// SpeechRecognition. Use the server STT path instead of silently
+		// leaving the Start Voice Turn button inert.
+		void startFallbackCapture();
+	}
+
+	async function startFallbackCapture() {
+		if (fallbackRecorder) return;
+		try {
+			fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			fallbackChunks = [];
+			fallbackRecorder = new MediaRecorder(fallbackStream);
+			fallbackRecorder.ondataavailable = (event) => {
+				if (event.data.size > 0) fallbackChunks.push(event.data);
+			};
+			fallbackRecorder.onstop = () => {
+				const blob = new Blob(fallbackChunks, { type: fallbackRecorder?.mimeType || 'audio/webm' });
+				fallbackRecorder = null;
+				fallbackStream?.getTracks().forEach((track) => track.stop());
+				fallbackStream = null;
+				void transcribeFallbackCapture(blob);
+			};
+			fallbackRecorder.start();
+			kuralState.set('LISTENING');
+		} catch (error) {
+			console.error('[KuralVoice] Microphone fallback failed:', error);
+			isContinuousListening = false;
+			kuralState.set('ERROR');
+			kuralResponseText.set('Microphone access is unavailable. Please allow microphone access and try again.');
 		}
 	}
 
-	function stopListening() {
+	async function transcribeFallbackCapture(blob: Blob) {
+		if (!blob.size) return;
+		try {
+			const form = new FormData();
+			form.append('file', blob, 'voice-turn.webm');
+			if (workspace) form.append('workspace', workspace);
+			form.append('source', 'voice_mode_fallback');
+			form.append('language', navigator.language || 'en-US');
+			const response = await fetch('/api/audio/transcribe', { method: 'POST', body: form });
+			if (!response.ok) throw new Error(await response.text());
+			const result = await response.json();
+			const transcript = String(result?.text || '').trim();
+			if (transcript) {
+				kuralTranscript.set(transcript);
+				await handleUserUtterance(transcript);
+			} else {
+				kuralState.set('IDLE');
+			}
+		} catch (error) {
+			console.error('[KuralVoice] Fallback transcription failed:', error);
+			kuralState.set('ERROR');
+			kuralResponseText.set('I could not understand that voice turn. Please try again.');
+		}
+	}
+
+	function stopListening(transcribeFallback = true) {
 		isContinuousListening = false;
 		if (recognition) {
 			try {
 				recognition.stop();
 			} catch (e) {}
 		}
+		if (transcribeFallback && fallbackRecorder) fallbackRecorder.stop();
 	}
 
 	function formatCasualShortVoiceReply(fullText: string): string {
@@ -241,7 +302,7 @@
 	}
 
 	async function handleUserUtterance(userText: string) {
-		stopListening();
+		stopListening(false);
 		stopTtsPlayback();
 
 		kuralState.set('THINKING');
@@ -439,7 +500,7 @@
 	<!-- Bottom Controls -->
 	<footer class="kural-footer">
 		{#if $kuralState === 'LISTENING' || $kuralState === 'SPEECH_DETECTED' || $kuralState === 'SPEAKING'}
-			<button class="mic-btn active" onclick={stopListening} title="Pause Listening">
+			<button class="mic-btn active" onclick={() => stopListening()} title="Pause Listening">
 				🎙️ Kural is listening...
 			</button>
 		{:else}

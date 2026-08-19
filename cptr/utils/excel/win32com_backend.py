@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from typing import Any, List, Optional
 
 from cptr.utils.excel.backend_base import ExcelBackend, ExcelResult
@@ -44,6 +45,32 @@ class Win32COMBackend(ExcelBackend):
     def is_live_mode(self) -> bool:
         return True
 
+    def _focus_excel_window(self) -> int:
+        """Return the real desktop window handle after bringing Excel forward."""
+        try:
+            import win32gui, win32con
+
+            for _ in range(15):
+                hwnd = int(getattr(self.excel_app, "Hwnd", 0) or 0)
+                if hwnd and win32gui.IsWindow(hwnd):
+                    self.excel_app.Visible = True
+                    try:
+                        self.excel_app.WindowState = -4137  # xlMaximized
+                    except Exception:
+                        pass
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
+                    win32gui.BringWindowToTop(hwnd)
+                    try:
+                        win32gui.SetForegroundWindow(hwnd)
+                    except Exception:
+                        pass
+                    return hwnd
+                time.sleep(0.2)
+        except Exception as exc:
+            logger.warning("[Win32COM] Could not focus Excel window: %s", exc)
+        return 0
+
     def _ensure_excel(self) -> bool:
         if not is_win32com_available():
             return False
@@ -52,22 +79,22 @@ class Win32COMBackend(ExcelBackend):
                 import win32com.client
                 try:
                     self.excel_app = win32com.client.GetActiveObject("Excel.Application")
+                    # GetActiveObject can return a background Excel instance
+                    # (for example one left behind by an add-in).  Such an
+                    # instance accepts COM calls but has no user-visible
+                    # window, which makes "open Excel" look successful while
+                    # nothing appears on the desktop.
+                    hwnd = int(getattr(self.excel_app, "Hwnd", 0) or 0)
+                    visible = bool(getattr(self.excel_app, "Visible", False))
+                    if not hwnd or not visible:
+                        self.excel_app = win32com.client.DispatchEx("Excel.Application")
                 except Exception:
-                    self.excel_app = win32com.client.Dispatch("Excel.Application")
+                    # DispatchEx creates a dedicated Excel process instead of
+                    # reusing a possibly hidden automation instance.
+                    self.excel_app = win32com.client.DispatchEx("Excel.Application")
                 self.excel_app.Visible = True
                 self.excel_app.UserControl = True
-                try:
-                    self.excel_app.WindowState = -4137  # xlMaximized
-                except Exception:
-                    pass
-                try:
-                    import win32gui, win32con
-                    hwnd = self.excel_app.Hwnd
-                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
-                    win32gui.BringWindowToTop(hwnd)
-                except Exception:
-                    pass
+                self._focus_excel_window()
             except Exception as exc:
                 logger.warning(f"[Win32COM] Could not connect to Excel application: {exc}")
                 return False
@@ -104,11 +131,20 @@ class Win32COMBackend(ExcelBackend):
                 else:
                     self.wb = self.excel_app.Workbooks.Add()
                 self.excel_app.Visible = True
+                hwnd = self._focus_excel_window()
+                if not hwnd:
+                    return ExcelResult(
+                        success=False,
+                        operation="open_workbook",
+                        message="Excel responded through COM but did not expose a visible desktop window. "
+                        "Please start Excel once from the Windows Start menu and try again.",
+                    )
                 return ExcelResult(
                     success=True,
                     operation="open_workbook",
                     workbook=self.wb.Name if self.wb else "Excel.Application",
                     sheet=self.wb.ActiveSheet.Name if self.wb and self.wb.ActiveSheet else "",
+                    data={"window_handle": hwnd, "live": True},
                     message=f"Opened live Microsoft Excel application (Workbook: '{self.wb.Name if self.wb else 'None'}').",
                 )
 
