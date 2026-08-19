@@ -115,6 +115,15 @@ class Win32COMBackend(ExcelBackend):
         return True
 
     def open_workbook(self, file_path: str = "") -> ExcelResult:
+        if not file_path and IS_WINDOWS:
+            # Start Excel through the interactive Windows shell first. COM
+            # automation alone can create an invisible server process when
+            # the assistant is running headlessly, which is not useful to the
+            # person who asked to open Excel.
+            try:
+                os.startfile("excel.exe")  # type: ignore[attr-defined]
+            except OSError as exc:
+                logger.warning("[Win32COM] Windows could not start Excel: %s", exc)
         if not self._ensure_excel():
             return ExcelResult(
                 success=False,

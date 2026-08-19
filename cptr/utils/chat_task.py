@@ -1855,7 +1855,84 @@ async def run_chat_task(
         )
         return
 
+    async def _handle_direct_excel_open_request() -> bool:
+        """Execute an explicit desktop-open request before model generation.
+
+        A model can describe a successful Excel launch without actually
+        emitting a function call. For this narrow, deterministic command,
+        execute the live tool first so the response can never claim success
+        without a real Excel window.
+        """
+        nonlocal content, task_completed_success
+        if output_items or not msg or not msg.parent_id:
+            return False
+        user_message = await ChatMessage.get_by_id(msg.parent_id)
+        user_text = str(user_message.content or "") if user_message else ""
+        is_open_request = bool(
+            re.match(
+                r"^\s*(?:please\s+)?(?:open|launch|start)\s+(?:an?\s+)?(?:microsoft\s+)?excel(?:\s|$)",
+                user_text,
+                re.IGNORECASE,
+            )
+            or re.match(r"^\s*excel\s+open(?:\s|$)", user_text, re.IGNORECASE)
+        )
+        if not is_open_request:
+            return False
+
+        call_id = str(uuid.uuid4())
+        result = await execute_tool(
+            "excel_open_workbook",
+            {"file_path": ""},
+            __context__={
+                "request": request,
+                "workspace": workspace,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "call_id": call_id,
+            },
+        )
+        parsed = json.loads(result)
+        content = str(parsed.get("message") or "Excel open request completed.")
+        call_item = {
+            "type": "function_call",
+            "id": str(uuid.uuid4()),
+            "call_id": call_id,
+            "name": "excel_open_workbook",
+            "arguments": {"file_path": ""},
+            "status": "completed" if parsed.get("success") else "failed",
+        }
+        output_item = {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": result,
+        }
+        output_items.extend((call_item, output_item))
+        await emit(output=call_item)
+        await emit(output=output_item)
+        _sync_state()
+        await _save_message(
+            "direct Excel open",
+            content=content,
+            output=output_items,
+            done=True,
+        )
+        _task_state.pop(message_id, None)
+        await _emit_done()
+        await publish_event(
+            EVENTS.CHAT_FINISHED,
+            actor={"id": user_id},
+            subject_id=chat_id,
+            subject_type="chat",
+            source="chat_task",
+            data={"workspace": event_workspace, "preview": content[:300]},
+            message=content[:300],
+        )
+        task_completed_success = bool(parsed.get("success"))
+        return True
+
     try:
+        if await _handle_direct_excel_open_request():
+            return
         if isinstance(target, AgentModelTarget):
             await _run_agent_target(target)
             return
