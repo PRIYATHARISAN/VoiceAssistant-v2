@@ -101,10 +101,16 @@ if _cors_raw.strip() == "*":
 else:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()] or "*"
 
-# ── STT & Sofie Settings ────────────────────────────────────
+# ── STT, TTS & Sofie Settings ──────────────────────────────
 STT_PROVIDER = os.environ.get("STT_PROVIDER", "indic_conformer")
 INDIC_CONFORMER_MODEL_PATH = os.environ.get("INDIC_CONFORMER_MODEL_PATH", "")
 STT_PRELOAD = _env_bool("STT_PRELOAD", "false")
+
+TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "sarvam")
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "sk_4hyae9gj_AmY5E10uBu1PEfZfcj6LQIPh")
+SARVAM_TTS_MODEL = os.environ.get("SARVAM_TTS_MODEL", "bulbul:v2")
+SARVAM_TTS_VOICE = os.environ.get("SARVAM_TTS_VOICE", "anushka")
+SARVAM_TTS_LANGUAGE = os.environ.get("SARVAM_TTS_LANGUAGE", "ta-IN")
 
 SOFIE_API_KEY = os.environ.get("SOFIE_API_KEY", "")
 SOFIE_BASE_URL = os.environ.get("SOFIE_BASE_URL", "https://llm.karunya.edu/v1")
@@ -112,4 +118,5 @@ SOFIE_MODEL = os.environ.get("SOFIE_MODEL", "sofie-code")
 
 # ── Local Auth ──────────────────────────────────────────────
 LOCAL_AUTH_DISABLED = _env_bool("LOCAL_AUTH_DISABLED", "true")
+
 

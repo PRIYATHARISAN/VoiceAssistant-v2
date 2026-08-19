@@ -44,7 +44,7 @@
 	import GitView from '$lib/components/GitView.svelte';
 	import Terminal from '$lib/components/Terminal.svelte';
 	import BrowserPreview from '$lib/components/BrowserPreview.svelte';
-	import ChatPanel from '$lib/components/chat/ChatPanel.svelte';
+	import KuralVoiceInterface from '$lib/components/KuralVoiceInterface.svelte';
 	import DirectoryPicker from '$lib/components/DirectoryPicker.svelte';
 	import GroupTabBar from '$lib/components/GroupTabBar.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -991,43 +991,14 @@
 			ondragleave={(event) => handlePaneDragLeave(event, homePane.id)}
 			ondrop={(event) => handlePaneDrop(event, homePane.id)}
 		>
-			<GroupTabBar
-				group={homePane}
-				home
-				isPrimary={homePane.id === $homeState.groups[0]?.id}
-				canClose={$homeState.groups.length > 1}
-				homeActive={homePane.id === $homeState.activeGroupId}
-				homeSplitActive={$homeState.groups.length > 1}
-				homeSplitDirection={$homeState.splitDirection}
-				onHomeSelect={(tabId) =>
-					updateHomeTabs(homePane.id, (tabs) => ({ tabs, activeTabId: tabId }))}
-				onHomeClose={(tabId) => closeHomeTab(tabId, homePane.id)}
-				onHomeReorder={(oldIndex, newIndex) => reorderHomeTabs(homePane.id, oldIndex, newIndex)}
-				onHomeMove={(tabId, fromGroupId) => moveHomeTabToGroup(tabId, fromGroupId, homePane.id)}
-				onHomeNewChat={() => openHomeChat(undefined, homePane.id)}
-				onHomeNewTerminal={() => openHomeTerminal(homePane.id)}
-				onHomeNewBrowser={() => openHomeBrowser(undefined, homePane.id)}
-				onHomeSplit={(direction) => {
-					setHomeActiveGroup(homePane.id);
-					splitHomeTab(direction);
-				}}
-				onHomeCloseGroup={() => closeHomeGroup(homePane.id)}
-				onTabDragOver={() => {
-					if (dragOverZone?.groupId === homePane.id) dragOverZone = null;
-				}}
-			/>
 			<div class="pane-content">
 				{#each homePane.tabs.filter((tab) => tab.type === 'chat') as tab (tab.id)}
 					<div class="persisted-tab" class:persisted-tab-hidden={tab.id !== homePane.activeTabId}>
-						<ChatPanel
-							chatId={tab.path?.startsWith('new-') || tab.path?.startsWith('pending-')
+						<KuralVoiceInterface
+							workspace={null}
+							activeChatId={tab.path?.startsWith('new-') || tab.path?.startsWith('pending-')
 								? undefined
 								: tab.path}
-							tabId={tab.id}
-							active={tab.id === homePane.activeTabId}
-							ontabupdate={(tabId, chatId, label) =>
-								updateHomeChatTab(tabId, chatId, label, homePane.id)}
-							onopenchat={(chatId) => openHomeChat(chatId, homePane.id)}
 						/>
 					</div>
 				{/each}
@@ -1379,14 +1350,6 @@
 		ondragleave={(event) => handlePaneDragLeave(event, group.id)}
 		ondrop={(event) => handlePaneDrop(event, group.id)}
 	>
-		<GroupTabBar
-			{group}
-			canClose={allGroups.length > 1}
-			isPrimary={group.id === allGroups[0]?.id}
-			onTabDragOver={() => {
-				if (dragOverZone?.groupId === group.id) dragOverZone = null;
-			}}
-		/>
 		<div class="pane-content">
 			{#each group.tabs.filter((tab) => tab.type === 'files') as tab (tab.id)}
 				<div class="persisted-tab" class:persisted-tab-hidden={tab.id !== group.activeTabId}>
@@ -1405,14 +1368,11 @@
 			{/each}
 			{#each group.tabs.filter((tab) => tab.type === 'chat') as tab (tab.id)}
 				<div class="persisted-tab" class:persisted-tab-hidden={tab.id !== group.activeTabId}>
-					<ChatPanel
-						workspace={$currentWorkspace!.path}
-						chatId={tab.path?.startsWith('new-') || tab.path?.startsWith('pending-')
+					<KuralVoiceInterface
+						workspace={$currentWorkspace?.path ?? null}
+						activeChatId={tab.path?.startsWith('new-') || tab.path?.startsWith('pending-')
 							? undefined
 							: tab.path}
-						tabId={tab.id}
-						active={tab.id === group.activeTabId}
-						onopenchat={(chatId) => openChatTab(chatId, group.id)}
 					/>
 				</div>
 			{/each}

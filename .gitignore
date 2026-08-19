@@ -27,3 +27,6 @@ Thumbs.db
 
 .cptr
 NewWorkbook*.xlsx
+scratch*.xlsx
+workbook*.xlsx
+cptr_default_workbook.xlsx

@@ -465,16 +465,6 @@
 		class="app-theme h-screen max-h-[100dvh] flex flex-col overflow-hidden font-sans antialiased text-gray-900 bg-white dark:text-gray-100 dark:bg-black"
 		style="background: var(--app-bg); color: var(--app-fg);"
 	>
-		<!-- Top Bar -->
-		<header class="h-12 flex-shrink-0 flex items-center justify-between px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-			<div class="flex items-center gap-2">
-				<span class="font-bold text-lg tracking-tight">Sofie</span>
-			</div>
-			<button class="p-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white" onclick={() => showSettings = true}>
-				<Icon name="settings" size={20} />
-			</button>
-		</header>
-
 		<div class="flex flex-1 min-h-0 overflow-hidden">
 			<!-- Left Sidebar -->
 			<Sidebar {gitSettingsAvailable} />

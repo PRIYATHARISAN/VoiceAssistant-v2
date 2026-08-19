@@ -12,22 +12,39 @@ export const QUALITY_BITRATES: Record<RecordingQuality, number> = {
 	low: 32000
 };
 
+export type KuralOrbState =
+	| 'IDLE'
+	| 'LISTENING'
+	| 'SPEECH_DETECTED'
+	| 'TRANSCRIBING'
+	| 'THINKING'
+	| 'EXECUTING'
+	| 'VERIFYING'
+	| 'SPEAKING'
+	| 'INTERRUPTED'
+	| 'ERROR';
+
+export const kuralState = writable<KuralOrbState>('IDLE');
+export const kuralTranscript = writable<string>('');
+export const kuralResponseText = writable<string>('');
+export const kuralAudioLevel = writable<number>(0);
+
 export const voiceMemosEnabled = writable<boolean>(false);
 export const transcribeEnabled = writable<boolean>(true);
 export const sttConfigured = writable<boolean>(false);
 export const recordingQuality = writable<RecordingQuality>('high');
 export const showVoiceMemo = writable<boolean>(false);
-export const ttsEnabled = writable<boolean>(false);
-export const ttsConfigured = writable<boolean>(false);
-export const ttsVoice = writable<string>('alloy');
-export const ttsFormat = writable<string>('mp3');
+export const ttsEnabled = writable<boolean>(true);
+export const ttsConfigured = writable<boolean>(true);
+export const ttsVoice = writable<string>('meera');
+export const ttsFormat = writable<string>('wav');
 export const ttsPlaybackSpeed = writable<number>(1);
 export const ttsAutoStreamEnabled = writable<boolean>(false);
 export const voiceModeSttMode = writable<'browser' | 'provider'>('browser');
 export const ttsPlaybackEnabled = writable<boolean>(
 	typeof localStorage !== 'undefined'
 		? localStorage.getItem('ttsPlaybackEnabled') === 'true'
-		: false
+		: true
 );
 
 const SILENT_WAV =
@@ -42,6 +59,20 @@ let currentTtsPlaybackSpeed = 1;
 ttsPlaybackEnabled.subscribe((v) => {
 	if (typeof localStorage !== 'undefined') localStorage.setItem('ttsPlaybackEnabled', String(v));
 });
+
+export function stopTtsPlayback() {
+	if (ttsAudioElement) {
+		ttsAudioElement.pause();
+		ttsAudioElement.currentTime = 0;
+		ttsAudioElement.removeAttribute('src');
+	}
+	clearMediaSession();
+}
+
+export function interruptKuralPlayback() {
+	stopTtsPlayback();
+	kuralState.set('INTERRUPTED');
+}
 
 ttsPlaybackSpeed.subscribe((v) => {
 	currentTtsPlaybackSpeed = Number.isFinite(v) ? Math.min(Math.max(v, 0.5), 2) : 1;

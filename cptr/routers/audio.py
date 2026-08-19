@@ -57,6 +57,7 @@ class AudioStateResponse(BaseModel):
     tts_playback_speed: float
     tts_auto_stream_enabled: bool
     voice_mode_stt_mode: str
+    tts_provider: str = "sarvam"
 
 
 def _get_user(request: Request) -> str:
@@ -72,10 +73,6 @@ def _get_user(request: Request) -> str:
 async def _workspace_audio_cache_dir(
     request: Request, workspace: str | None, kind: str
 ) -> Path | None:
-    # Voice samples are project context, so they live under the workspace .cptr
-    # folder and move with the project. That keeps STT and TTS artifacts available
-    # for reuse, debugging, and the local data flywheel. By default,
-    # ensure_cptr_gitignored keeps them out of git.
     if not workspace:
         return None
     try:
@@ -88,9 +85,6 @@ async def _workspace_audio_cache_dir(
 
 
 def _cache_key(payload: dict, data: bytes | None = None) -> str:
-    # The key includes the provider settings plus the exact audio bytes or text.
-    # Without those inputs, a model, voice, or format change could accidentally reuse
-    # the wrong artifact. The JSON file beside the audio explains what the hash means.
     h = hashlib.sha256()
     h.update(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
     if data is not None:
@@ -139,16 +133,13 @@ def compress_audio(file_path: str) -> str:
 
 
 def split_audio(file_path: str, max_bytes: int) -> list[str]:
-    """Split audio into chunks not exceeding max_bytes.
-
-    Returns a list of chunk file paths. If audio fits, returns [file_path].
-    """
+    """Split audio into chunks not exceeding max_bytes."""
     file_size = os.path.getsize(file_path)
     if file_size <= max_bytes:
         return [file_path]
 
     if not HAS_PYDUB:
-        return [file_path]  # Can't split without pydub
+        return [file_path]
 
     audio = AudioSegment.from_file(file_path)
     duration_ms = len(audio)
@@ -165,7 +156,6 @@ def split_audio(file_path: str, max_bytes: int) -> list[str]:
         chunk_path = f"{base}_chunk_{i}.mp3"
         chunk.export(chunk_path, format="mp3", bitrate="32k")
 
-        # Halve chunk duration if still too large
         while os.path.getsize(chunk_path) > max_bytes and (end - start) > 5000:
             end = start + ((end - start) // 2)
             chunk = audio[start:end]
@@ -190,6 +180,9 @@ async def audio_state(request: Request):
     """Return non-sensitive audio feature state for the authenticated UI."""
     _get_user(request)
 
+    from cptr.utils.tts import get_tts_provider
+
+    tts_p = get_tts_provider()
     tts_key = await Config.get("audio.tts_api_key")
     stt_key = await Config.get("audio.stt_api_key")
     quality = await Config.get("audio.recording_quality")
@@ -202,18 +195,21 @@ async def audio_state(request: Request):
         playback_speed = 1.0
     playback_speed = min(max(playback_speed, 0.5), 2.0)
 
+    is_tts_configured = bool((tts_p and tts_p.is_available) or tts_key or stt_key)
+
     return AudioStateResponse(
         voice_memos_enabled=await Config.get("audio.voice_memos_enabled") is True,
         transcribe_enabled=await Config.get("audio.transcribe_enabled") is not False,
         stt_configured=bool(stt_key),
         recording_quality=str(quality),
-        tts_enabled=await Config.get("audio.tts_enabled") is True,
-        tts_configured=bool(tts_key or stt_key),
-        tts_voice=str((await Config.get("audio.tts_voice")) or "alloy"),
-        tts_format=str((await Config.get("audio.tts_format")) or "mp3"),
+        tts_enabled=await Config.get("audio.tts_enabled") is not False,
+        tts_configured=is_tts_configured,
+        tts_voice=str((await Config.get("audio.tts_voice")) or "meera"),
+        tts_format=str((await Config.get("audio.tts_format")) or "wav"),
         tts_playback_speed=playback_speed,
         tts_auto_stream_enabled=await Config.get("audio.tts_auto_stream_enabled") is True,
         voice_mode_stt_mode=str((await Config.get("audio.voice_mode_stt_mode")) or "browser"),
+        tts_provider=tts_p.provider_name if tts_p else "sarvam",
     )
 
 
@@ -486,50 +482,33 @@ def _audio_media_type(fmt: str) -> str:
 
 @router.post("/speech")
 async def speech(request: Request, body: SpeechRequest):
-    """Generate speech audio using an OpenAI-compatible TTS API."""
+    """Generate speech audio using Sarvam AI TTS (or configured provider)."""
     _get_user(request)
 
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "Text-to-speech requires non-empty text.")
 
-    if await Config.get("audio.tts_enabled") is not True:
-        raise HTTPException(400, "Text-to-speech is disabled in Settings → Audio.")
+    from cptr.utils.tts import get_tts_provider
 
-    api_key_encrypted = await Config.get("audio.tts_api_key")
-    if not api_key_encrypted:
-        api_key_encrypted = await Config.get("audio.stt_api_key")
-    if not api_key_encrypted:
-        raise HTTPException(
-            400,
-            "Text-to-speech not configured. Set up a TTS or STT API key in Settings → Audio.",
-        )
+    tts_provider = get_tts_provider()
+    voice = body.voice or (await Config.get("audio.tts_voice")) or "meera"
+    fmt = str((await Config.get("audio.tts_format")) or "wav").lower()
+    playback_speed = await Config.get("audio.tts_playback_speed")
+    try:
+        playback_speed = float(playback_speed)
+    except (TypeError, ValueError):
+        playback_speed = 1.0
 
-    api_key = decrypt_key(api_key_encrypted, _get_jwt_secret())
-    base_url = ((await Config.get("audio.tts_base_url")) or "https://api.openai.com/v1").rstrip("/")
-    model = (await Config.get("audio.tts_model")) or "tts-1"
-    voice = body.voice or (await Config.get("audio.tts_voice")) or "alloy"
-    fmt = str((await Config.get("audio.tts_format")) or "mp3").lower()
-
-    payload = {
-        "model": model,
-        "input": text,
-        "voice": voice,
-        "response_format": fmt,
-    }
     cache_dir = await _workspace_audio_cache_dir(request, body.workspace, "tts")
     cache_audio_path: Path | None = None
     cache_json_path: Path | None = None
     if cache_dir:
-        # TTS is especially worth caching because short phrases repeat often across
-        # messages and replays. The key uses provider, model, voice, format, and exact
-        # text so a phrase like "Hi." can be reused safely without new spend, while
-        # the neighboring JSON records why that audio file exists.
+        provider_name = tts_provider.provider_name if tts_provider else "sarvam"
         key = _cache_key(
             {
                 "type": "tts",
-                "base_url": base_url,
-                "model": model,
+                "provider": provider_name,
                 "voice": voice,
                 "format": fmt,
                 "text": text,
@@ -550,30 +529,54 @@ async def speech(request: Request, body: SpeechRequest):
         except FileError:
             pass
 
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120)) as client:
-            resp = await client.post(
-                f"{base_url}/audio/speech",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        logger.warning(
-            "[speech] TTS API error %s: %s",
-            exc.response.status_code,
-            exc.response.text[:500],
-        )
-        raise HTTPException(502, f"TTS API error: {exc.response.status_code}")
-    except httpx.ConnectError:
-        raise HTTPException(502, "Could not connect to TTS API")
+    audio_bytes: bytes | None = None
 
-    if not resp.content:
-        raise HTTPException(502, "TTS API returned empty audio.")
+    if tts_provider and tts_provider.is_available:
+        try:
+            audio_bytes = await tts_provider.synthesize(
+                text=text,
+                voice=voice,
+                format=fmt,
+                speed=playback_speed,
+            )
+        except Exception as exc:
+            logger.warning("[speech] TTS provider '%s' failed: %s", tts_provider.provider_name, exc)
+
+    if not audio_bytes:
+        # Fallback to OpenAI API format if configured
+        api_key_encrypted = await Config.get("audio.tts_api_key") or await Config.get("audio.stt_api_key")
+        if api_key_encrypted:
+            api_key = decrypt_key(api_key_encrypted, _get_jwt_secret())
+            base_url = ((await Config.get("audio.tts_base_url")) or "https://api.openai.com/v1").rstrip("/")
+            model = (await Config.get("audio.tts_model")) or "tts-1"
+            fallback_voice = body.voice or "alloy"
+            payload = {
+                "model": model,
+                "input": text,
+                "voice": fallback_voice,
+                "response_format": fmt,
+            }
+            try:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
+                    resp = await client.post(
+                        f"{base_url}/audio/speech",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                    audio_bytes = resp.content
+            except Exception as exc:
+                logger.warning("[speech] Fallback TTS API failed: %s", exc)
+
+    if not audio_bytes:
+        raise HTTPException(
+            502,
+            "Text-to-speech service unavailable. Verify SARVAM_API_KEY or TTS provider settings.",
+        )
 
     cache_state = "disabled"
     if cache_audio_path and cache_json_path:
-        await Runtime.write_file(request, str(cache_audio_path), resp.content)
+        await Runtime.write_file(request, str(cache_audio_path), audio_bytes)
         await Runtime.write_file(
             request,
             str(cache_json_path),
@@ -582,8 +585,7 @@ async def speech(request: Request, body: SpeechRequest):
                     "type": "tts",
                     "text": text,
                     "audio_file": cache_audio_path.name,
-                    "base_url": base_url,
-                    "model": model,
+                    "provider": tts_provider.provider_name if tts_provider else "sarvam",
                     "voice": voice,
                     "format": fmt,
                     "content_type": _audio_media_type(str(fmt)),
@@ -593,7 +595,7 @@ async def speech(request: Request, body: SpeechRequest):
         cache_state = "write"
 
     return Response(
-        content=resp.content,
+        content=audio_bytes,
         media_type=_audio_media_type(str(fmt)),
         headers={"X-CPTR-Audio-Cache": cache_state},
     )
