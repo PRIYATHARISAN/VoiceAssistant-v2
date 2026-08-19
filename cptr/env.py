@@ -7,7 +7,18 @@ instead of reading os.environ directly.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+if sys.platform == "win32":
+    for _git_p in [
+        r"C:\Program Files\Git\cmd",
+        r"C:\Program Files\Git\bin",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\bin"),
+    ]:
+        if os.path.exists(_git_p) and _git_p not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = f"{_git_p};" + os.environ.get("PATH", "")
+
 
 
 def _env_bool(name: str, default: str = "false") -> bool:

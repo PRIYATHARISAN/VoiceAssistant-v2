@@ -55,6 +55,19 @@ class Win32COMBackend(ExcelBackend):
                 except Exception:
                     self.excel_app = win32com.client.Dispatch("Excel.Application")
                 self.excel_app.Visible = True
+                self.excel_app.UserControl = True
+                try:
+                    self.excel_app.WindowState = -4137  # xlMaximized
+                except Exception:
+                    pass
+                try:
+                    import win32gui, win32con
+                    hwnd = self.excel_app.Hwnd
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
+                    win32gui.BringWindowToTop(hwnd)
+                except Exception:
+                    pass
             except Exception as exc:
                 logger.warning(f"[Win32COM] Could not connect to Excel application: {exc}")
                 return False

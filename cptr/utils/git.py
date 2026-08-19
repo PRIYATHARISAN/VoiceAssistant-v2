@@ -41,9 +41,7 @@ async def _run(
             preexec_fn=preexec_for(identity) if identity and identity.is_pam else None,
         )
     except FileNotFoundError as exc:
-        if exc.filename != "git":
-            raise
-        raise GitError("Git is not installed", 127) from exc
+        raise GitError("Git is not installed or not found in PATH", 127) from exc
     stdout_bytes, stderr_bytes = await proc.communicate()
     stdout = stdout_bytes.decode("utf-8", errors="replace")
     stderr = stderr_bytes.decode("utf-8", errors="replace")
