@@ -2179,10 +2179,16 @@ async def run_chat_task(
 
             return "completed" if processed_any else "idle"
 
+        request_user_text = ""
+        if msg and msg.parent_id:
+            request_parent = await ChatMessage.get_by_id(msg.parent_id)
+            request_user_text = str(request_parent.content or "") if request_parent else ""
+
         tool_ctx = {
             "workspace": workspace,
             "user_id": user_id,
             "request": request,
+            "user_text": request_user_text,
             "model_id": model,
             "full_model_id": ((chat_obj.meta or {}).get("last_model") if chat_obj else None)
             or model,

@@ -13,6 +13,7 @@ from cptr.utils.excel.session import ExcelSession, get_excel_session
 from cptr.utils.excel.win32com_backend import is_win32com_available
 from cptr.utils.excel.win32com_backend import Win32COMBackend
 from cptr.utils.excel import EXCEL_TOOLS
+from cptr.utils.excel.tools import _explicit_new_workbook_request
 from cptr.utils.tools import execute_tool, get_tool_list
 
 
@@ -94,6 +95,11 @@ class TestPhase1ExcelToolsUnit(unittest.TestCase):
                 shutil.rmtree(self.temp_dir)
             except Exception:
                 pass
+
+    def test_create_tool_guard_only_allows_explicit_new_request(self):
+        self.assertTrue(_explicit_new_workbook_request({"user_text": "new workbook open Pannu"}))
+        self.assertTrue(_explicit_new_workbook_request({"user_text": "create a new Excel workbook"}))
+        self.assertFalse(_explicit_new_workbook_request({"user_text": "add any 10 numbers in column A and B"}))
 
     def test_excel_open_workbook_accepts_empty_path(self):
         """2. excel_open_workbook accepts an empty/no-path request ("Open Excel")."""

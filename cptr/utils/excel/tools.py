@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, List, Literal, Optional
 
 from cptr.utils.excel.backend_base import ExcelResult
@@ -22,6 +23,19 @@ def _ensure_active_session_workbook(session, __context__: dict):
             if create_res.success:
                 session.active_workbook_path = create_res.workbook or "Workbook1.xlsx"
     return backend
+
+
+def _explicit_new_workbook_request(__context__: dict) -> bool:
+    """Return whether the current user request explicitly asks for a new workbook."""
+    text = str(__context__.get("user_text") or "").strip().lower()
+    if not text:
+        # Direct programmatic calls to this tool retain their historical
+        # explicit-create semantics. Chat calls include user_text below.
+        return True
+    return bool(
+        re.search(r"\b(?:new|another|blank|create)\b.{0,40}\b(?:workbook|excel|spreadsheet)\b", text)
+        or re.search(r"\b(?:workbook|excel|spreadsheet)\b.{0,40}\b(?:new|create)\b", text)
+    )
 
 
 async def excel_open_workbook(
@@ -91,6 +105,13 @@ async def excel_create_workbook(
     full_path = ""
     if file_path:
         full_path = file_path if os.path.isabs(file_path) else os.path.join(ws_dir, file_path) if ws_dir else file_path
+
+    # The model may select this tool while handling a normal data operation.
+    # Once a session already has a workbook, never create another one unless
+    # the user's request explicitly asks for a new workbook.
+    if not full_path and not _explicit_new_workbook_request(__context__):
+        backend = _ensure_active_session_workbook(session, __context__)
+        return backend.get_workbook_info().to_json()
 
     backend = session.ensure_backend(full_path if full_path else None, live_mode=live_mode, workspace=ws_dir)
     res = backend.create_workbook(full_path)
