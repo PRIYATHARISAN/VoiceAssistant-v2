@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import time
 from typing import Any, List, Optional
@@ -50,6 +51,18 @@ class Win32COMBackend(ExcelBackend):
         try:
             import win32gui, win32con
 
+            def raise_window(hwnd: int) -> int:
+                if not hwnd or not win32gui.IsWindow(hwnd):
+                    return 0
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
+                win32gui.BringWindowToTop(hwnd)
+                try:
+                    win32gui.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+                return hwnd
+
             for _ in range(15):
                 hwnd = int(getattr(self.excel_app, "Hwnd", 0) or 0)
                 if hwnd and win32gui.IsWindow(hwnd):
@@ -58,14 +71,22 @@ class Win32COMBackend(ExcelBackend):
                         self.excel_app.WindowState = -4137  # xlMaximized
                     except Exception:
                         pass
-                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
-                    win32gui.BringWindowToTop(hwnd)
-                    try:
-                        win32gui.SetForegroundWindow(hwnd)
-                    except Exception:
-                        pass
-                    return hwnd
+                    return raise_window(hwnd)
+                # COM can point at a background Excel instance whose Hwnd is
+                # zero. Find the actual interactive Excel window instead.
+                visible_windows: list[int] = []
+
+                def on_window(window, _extra):
+                    if win32gui.IsWindowVisible(window):
+                        try:
+                            if win32gui.GetClassName(window) == "XLMAIN":
+                                visible_windows.append(int(window))
+                        except Exception:
+                            pass
+
+                win32gui.EnumWindows(on_window, None)
+                if visible_windows:
+                    return raise_window(visible_windows[-1])
                 time.sleep(0.2)
         except Exception as exc:
             logger.warning("[Win32COM] Could not focus Excel window: %s", exc)
@@ -80,6 +101,24 @@ class Win32COMBackend(ExcelBackend):
             import win32gui
 
             found = 0
+            for _ in range(30):
+                def on_window(hwnd, _extra):
+                    nonlocal found
+                    if found or not win32gui.IsWindowVisible(hwnd):
+                        return
+                    try:
+                        if win32gui.GetClassName(hwnd) == "XLMAIN":
+                            found = int(hwnd)
+                    except Exception:
+                        pass
+
+                win32gui.EnumWindows(on_window, None)
+                if found:
+                    return found
+                time.sleep(0.2)
+            # os.startfile can hand off to a hidden Excel automation process.
+            # A direct desktop process launch guarantees an interactive window.
+            subprocess.Popen(["excel.exe"], close_fds=True)
             for _ in range(30):
                 def on_window(hwnd, _extra):
                     nonlocal found
