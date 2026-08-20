@@ -60,6 +60,25 @@ class TestPhase1SessionBackendSelection(unittest.TestCase):
             dispatch_ex.assert_called_once_with("Excel.Application")
             self.assertIs(backend.excel_app, visible)
 
+    @patch("cptr.utils.excel.win32com_backend.is_win32com_available", return_value=True)
+    def test_open_reuses_existing_workbook_without_desktop_launch(self, _mock_available):
+        """Opening Excel again must not start another blank workbook."""
+        import win32com.client
+
+        workbook = MagicMock(Name="Book1", ActiveSheet=MagicMock(Name="Sheet1"))
+        workbooks = MagicMock(Count=1, __iter__=lambda self: iter([workbook]))
+        visible = MagicMock(Hwnd=1234, Visible=True, Workbooks=workbooks, ActiveWorkbook=workbook)
+        with patch.object(win32com.client, "GetActiveObject", return_value=visible), \
+             patch.object(Win32COMBackend, "_focus_excel_window", return_value=1234), \
+             patch.object(Win32COMBackend, "_launch_excel_desktop") as launch:
+            backend = Win32COMBackend()
+            result = backend.open_workbook("")
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.workbook, "Book1")
+        workbooks.Add.assert_not_called()
+        launch.assert_not_called()
+
 
 class TestPhase1ExcelToolsUnit(unittest.TestCase):
     """Unit tests for Phase 1 tools (open, create, cell write, range write, formula)."""

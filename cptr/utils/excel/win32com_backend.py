@@ -182,7 +182,10 @@ class Win32COMBackend(ExcelBackend):
         return True
 
     def open_workbook(self, file_path: str = "") -> ExcelResult:
-        desktop_hwnd = self._launch_excel_desktop() if not file_path else 0
+        # Reuse the current COM application first. Starting excel.exe before
+        # attaching to Excel can create a fresh blank workbook on every tool
+        # call, even when the current session already has an active workbook.
+        desktop_hwnd = 0
         if not self._ensure_excel():
             return ExcelResult(
                 success=False,
@@ -200,6 +203,11 @@ class Win32COMBackend(ExcelBackend):
                     self.wb = self.excel_app.Workbooks.Add()
                 self.excel_app.Visible = True
                 hwnd = self._focus_excel_window()
+                # Only launch a desktop process if the reused COM instance
+                # failed to expose any interactive window. This path is a
+                # recovery fallback, never the normal workbook-open flow.
+                if not hwnd:
+                    desktop_hwnd = self._launch_excel_desktop()
                 hwnd = hwnd or desktop_hwnd
                 if not hwnd:
                     return ExcelResult(
