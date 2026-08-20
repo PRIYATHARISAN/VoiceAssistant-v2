@@ -205,3 +205,19 @@ class ExcelBackend(ABC):
         sheet_name: str | None = None,
     ) -> ExcelResult:
         ...
+
+    @abstractmethod
+    def list_charts(self, sheet_name: str | None = None) -> ExcelResult:
+        ...
+
+    @abstractmethod
+    def update_chart(
+        self,
+        chart_identifier: str | int = 1,
+        title: str | None = None,
+        chart_type: str | None = None,
+        cell_range: str | None = None,
+        name: str | None = None,
+        sheet_name: str | None = None,
+    ) -> ExcelResult:
+        ...

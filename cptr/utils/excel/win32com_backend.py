@@ -25,9 +25,42 @@ if IS_WINDOWS:
         HAS_WIN32COM = False
 
 
+import re
+
 def is_win32com_available() -> bool:
     """Return True if running on Windows and win32com is installed."""
     return IS_WINDOWS and HAS_WIN32COM
+
+
+def _parse_rgb_color(color_str: str) -> int:
+    """Convert color name or hex string to Excel Win32 BGR/RGB integer."""
+    named_colors = {
+        "red": (255, 0, 0),
+        "green": (0, 176, 80),
+        "light_green": (224, 255, 224),
+        "blue": (0, 112, 192),
+        "light_blue": (220, 230, 242),
+        "yellow": (255, 255, 0),
+        "light_yellow": (255, 255, 204),
+        "orange": (255, 192, 0),
+        "gray": (128, 128, 128),
+        "white": (255, 255, 255),
+        "black": (0, 0, 0),
+    }
+    clean = str(color_str or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if clean in named_colors:
+        r, g, b = named_colors[clean]
+        return r + (g << 8) + (b << 16)
+    hex_c = clean.lstrip("#")
+    if len(hex_c) == 6:
+        try:
+            r = int(hex_c[0:2], 16)
+            g = int(hex_c[2:4], 16)
+            b = int(hex_c[4:6], 16)
+            return r + (g << 8) + (b << 16)
+        except ValueError:
+            pass
+    return 65280  # Default light green
 
 
 class Win32COMBackend(ExcelBackend):
@@ -642,7 +675,11 @@ class Win32COMBackend(ExcelBackend):
             return ExcelResult(success=False, operation="format_range", message="No live workbook open.")
         try:
             ws = self.wb.Worksheets(sheet_name) if sheet_name else self.wb.ActiveSheet
-            rng = ws.Range(cell_range)
+            target_range = str(cell_range or "").strip()
+            # Normalize single column like 'A' -> 'A:A'
+            if re.match(r"^[A-Za-z]+$", target_range):
+                target_range = f"{target_range}:{target_range}"
+            rng = ws.Range(target_range)
             if font_name:
                 rng.Font.Name = font_name
             if font_size:
@@ -651,8 +688,18 @@ class Win32COMBackend(ExcelBackend):
                 rng.Font.Bold = bold
             if italic is not None:
                 rng.Font.Italic = italic
+            if font_color:
+                rng.Font.Color = _parse_rgb_color(font_color)
+            if fill_color:
+                rng.Interior.Color = _parse_rgb_color(fill_color)
             if number_format:
                 rng.NumberFormat = number_format
+            if alignment:
+                align_map = {"left": 2, "center": 3, "right": 4}
+                if alignment.lower() in align_map:
+                    rng.HorizontalAlignment = align_map[alignment.lower()]
+            if borders:
+                rng.Borders.LineStyle = 1
             if auto_fit:
                 rng.Columns.AutoFit()
             return ExcelResult(
@@ -660,8 +707,8 @@ class Win32COMBackend(ExcelBackend):
                 operation="format_range",
                 workbook=self.wb.Name,
                 sheet=ws.Name,
-                affected_range=cell_range,
-                message=f"Formatted range '{cell_range}' in live Excel.",
+                affected_range=target_range,
+                message=f"Formatted range '{target_range}' in live Excel.",
             )
         except Exception as exc:
             return ExcelResult(success=False, operation="format_range", message=f"COM error: {exc}")
@@ -692,3 +739,101 @@ class Win32COMBackend(ExcelBackend):
             )
         except Exception as exc:
             return ExcelResult(success=False, operation="create_chart", message=f"COM error: {exc}")
+
+    def list_charts(self, sheet_name: str | None = None) -> ExcelResult:
+        if self.wb is None:
+            return ExcelResult(success=False, operation="list_charts", message="No live workbook open.")
+        try:
+            ws = self.wb.Worksheets(sheet_name) if sheet_name else self.wb.ActiveSheet
+            charts_info = []
+            count = ws.ChartObjects().Count
+            for i in range(1, count + 1):
+                c_obj = ws.ChartObjects(i)
+                title = ""
+                try:
+                    if c_obj.Chart.HasTitle:
+                        title = str(c_obj.Chart.ChartTitle.Text)
+                except Exception:
+                    pass
+                charts_info.append({
+                    "index": i,
+                    "name": str(c_obj.Name),
+                    "title": title,
+                })
+            return ExcelResult(
+                success=True,
+                operation="list_charts",
+                workbook=self.wb.Name,
+                sheet=ws.Name,
+                data={"charts": charts_info, "count": len(charts_info)},
+                message=f"Found {len(charts_info)} charts in sheet '{ws.Name}'.",
+            )
+        except Exception as exc:
+            return ExcelResult(success=False, operation="list_charts", message=f"COM error: {exc}")
+
+    def update_chart(
+        self,
+        chart_identifier: str | int = 1,
+        title: str | None = None,
+        chart_type: str | None = None,
+        cell_range: str | None = None,
+        name: str | None = None,
+        sheet_name: str | None = None,
+    ) -> ExcelResult:
+        if self.wb is None:
+            return ExcelResult(success=False, operation="update_chart", message="No live workbook open.")
+        try:
+            ws = self.wb.Worksheets(sheet_name) if sheet_name else self.wb.ActiveSheet
+            if ws.ChartObjects().Count == 0:
+                return ExcelResult(success=False, operation="update_chart", message=f"No charts found in sheet '{ws.Name}'.")
+
+            c_obj = None
+            if isinstance(chart_identifier, int) or (isinstance(chart_identifier, str) and str(chart_identifier).isdigit()):
+                idx = int(chart_identifier)
+                if 1 <= idx <= ws.ChartObjects().Count:
+                    c_obj = ws.ChartObjects(idx)
+                else:
+                    c_obj = ws.ChartObjects(1)
+            else:
+                try:
+                    c_obj = ws.ChartObjects(chart_identifier)
+                except Exception:
+                    c_obj = ws.ChartObjects(1)
+
+            if title is not None:
+                c_obj.Chart.HasTitle = True
+                c_obj.Chart.ChartTitle.Text = str(title)
+            if name is not None:
+                c_obj.Name = str(name)
+            if cell_range is not None:
+                c_obj.Chart.SetSourceData(Source=ws.Range(cell_range))
+            if chart_type is not None:
+                type_map = {
+                    "col": 51,
+                    "column": 51,
+                    "bar": 57,
+                    "line": 4,
+                    "pie": 5,
+                    "area": 1,
+                    "scatter": -4169,
+                }
+                ct = type_map.get(str(chart_type).lower(), 51)
+                c_obj.Chart.ChartType = ct
+
+            final_title = ""
+            try:
+                if c_obj.Chart.HasTitle:
+                    final_title = str(c_obj.Chart.ChartTitle.Text)
+            except Exception:
+                pass
+
+            return ExcelResult(
+                success=True,
+                operation="update_chart",
+                workbook=self.wb.Name,
+                sheet=ws.Name,
+                message=f"Updated chart '{c_obj.Name}' (Title: '{final_title}').",
+                data={"name": str(c_obj.Name), "title": final_title},
+            )
+        except Exception as exc:
+            return ExcelResult(success=False, operation="update_chart", message=f"COM error: {exc}")

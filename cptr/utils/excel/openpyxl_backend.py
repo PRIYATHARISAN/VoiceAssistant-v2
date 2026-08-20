@@ -699,3 +699,66 @@ class OpenPyXLBackend(ExcelBackend):
             )
         except Exception as exc:
             return ExcelResult(success=False, operation="create_chart", message=f"Chart creation error: {exc}")
+
+    def list_charts(self, sheet_name: str | None = None) -> ExcelResult:
+        try:
+            ws = self._get_sheet(sheet_name)
+            charts = getattr(ws, "_charts", [])
+            charts_info = []
+            for i, c in enumerate(charts, start=1):
+                t = getattr(c, "title", "")
+                title_str = ""
+                if isinstance(t, str):
+                    title_str = t
+                elif t:
+                    try:
+                        if hasattr(t, "tx") and t.tx and hasattr(t.tx, "rich") and t.tx.rich:
+                            texts = [r.t for p in t.tx.rich.paragraphs for r in getattr(p, "r", []) if getattr(r, "t", None)]
+                            title_str = "".join(texts)
+                    except Exception:
+                        pass
+                charts_info.append({
+                    "index": i,
+                    "title": title_str,
+                })
+            return ExcelResult(
+                success=True,
+                operation="list_charts",
+                workbook=os.path.basename(self.file_path),
+                sheet=ws.title,
+                data={"charts": charts_info, "count": len(charts_info)},
+                message=f"Found {len(charts_info)} charts in sheet '{ws.title}'.",
+            )
+        except Exception as exc:
+            return ExcelResult(success=False, operation="list_charts", message=f"Chart error: {exc}")
+
+    def update_chart(
+        self,
+        chart_identifier: str | int = 1,
+        title: str | None = None,
+        chart_type: str | None = None,
+        cell_range: str | None = None,
+        name: str | None = None,
+        sheet_name: str | None = None,
+    ) -> ExcelResult:
+        try:
+            ws = self._get_sheet(sheet_name)
+            charts = getattr(ws, "_charts", [])
+            if not charts:
+                return ExcelResult(success=False, operation="update_chart", message=f"No charts found in sheet '{ws.title}'.")
+            idx = 0
+            if isinstance(chart_identifier, int) or (isinstance(chart_identifier, str) and str(chart_identifier).isdigit()):
+                idx = max(0, min(int(chart_identifier) - 1, len(charts) - 1))
+            chart = charts[idx]
+            if title is not None:
+                chart.title = title
+            return ExcelResult(
+                success=True,
+                operation="update_chart",
+                workbook=os.path.basename(self.file_path),
+                sheet=ws.title,
+                message=f"Updated chart title to '{title}'.",
+                data={"title": str(title)},
+            )
+        except Exception as exc:
+            return ExcelResult(success=False, operation="update_chart", message=f"Chart update error: {exc}")

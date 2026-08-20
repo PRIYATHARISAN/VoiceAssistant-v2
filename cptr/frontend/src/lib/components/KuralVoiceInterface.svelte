@@ -29,6 +29,7 @@
 	}>();
 
 	let isContinuousListening = $state(false);
+	let currentVoiceChatId = $state<string | null>(activeChatId ?? null);
 	let recognition = $state<any>(null);
 	let audioCtx = $state<AudioContext | null>(null);
 	let analyser = $state<AnalyserNode | null>(null);
@@ -40,8 +41,10 @@
 	let fallbackChunks: Blob[] = [];
 
 	$effect(() => {
-		if (activeChatId && !activeChatId.startsWith('new-') && !activeChatId.startsWith('pending-')) {
-			getChat(activeChatId)
+		const cid = activeChatId || currentVoiceChatId;
+		if (cid && !cid.startsWith('new-') && !cid.startsWith('pending-')) {
+			currentVoiceChatId = cid;
+			getChat(cid)
 				.then((detail) => {
 					if (detail?.messages?.length) {
 						conversationLog = detail.messages
@@ -291,7 +294,16 @@
 
 	function formatCasualShortVoiceReply(fullText: string): string {
 		if (!fullText) return 'Done!';
-		const clean = fullText.replace(/[*_#`~[\]()]/g, '').trim();
+		let clean = fullText
+			.replace(/```[\s\S]*?```/g, '')
+			.replace(/`([^`]+)`/g, '$1')
+			.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+			.replace(/[*_#~[\]()]/g, '')
+			.replace(/^\s*[-*+]\s+/gm, '')
+			.replace(/\n+/g, ' ')
+			.trim();
+
+		if (!clean) return 'Done!';
 
 		const sentences = clean.split(/(?<=[.!?])\s+/).filter(Boolean);
 		if (sentences.length <= 2) {
@@ -317,16 +329,21 @@
 				responseText = $kuralResponseText || 'Done.';
 			} else {
 				const model = get(defaultModel) || 'sofie-code';
+				const effectiveChatId = currentVoiceChatId || activeChatId || undefined;
 				const sendResult = await sendMessage(
 					userText,
 					model,
 					workspace ?? undefined,
-					activeChatId ?? undefined,
+					effectiveChatId,
 					null,
 					{ tool_approval_mode: 'auto', voice_mode: true }
 				);
 
-				const targetChatId = sendResult.chat_id || activeChatId;
+				if (sendResult?.chat_id) {
+					currentVoiceChatId = sendResult.chat_id;
+				}
+
+				const targetChatId = sendResult?.chat_id || effectiveChatId;
 
 				// Wait for agent execution (which runs Excel tool & generates response)
 				let attempts = 0;
@@ -351,7 +368,7 @@
 
 			const shortReply = formatCasualShortVoiceReply(responseText);
 			kuralResponseText.set(shortReply);
-			conversationLog = [...conversationLog, { role: 'assistant', text: responseText }];
+			conversationLog = [...conversationLog, { role: 'assistant', text: shortReply }];
 
 			// Synthesize speech via Sarvam AI TTS or Web Speech API
 			await synthesizeAndSpeak(shortReply);

@@ -521,3 +521,48 @@ async def excel_create_chart(
         target_cell=target_cell,
         sheet_name=sheet_name,
     ).to_json()
+
+
+async def excel_list_charts(
+    sheet_name: str | None = None,
+    *,
+    __context__: dict,
+) -> str:
+    """List all charts in a worksheet with their indexes, names, and titles.
+
+    :param sheet_name: Optional target worksheet name.
+    """
+    session = get_excel_session(__context__)
+    backend = _ensure_active_session_workbook(session, __context__)
+    return backend.list_charts(sheet_name=sheet_name).to_json()
+
+
+async def excel_update_chart(
+    chart_identifier: str | int = 1,
+    title: str | None = None,
+    chart_type: str | None = None,
+    cell_range: str | None = None,
+    name: str | None = None,
+    sheet_name: str | None = None,
+    *,
+    __context__: dict,
+) -> str:
+    """Update or rename an existing chart (change title, chart name, data range, or chart type).
+
+    :param chart_identifier: Chart index (1, 2, ...) or chart name. Defaults to 1 (the first chart).
+    :param title: New title text for the chart (e.g. 'Age vs Number' or 'Sales Overview').
+    :param chart_type: Optional new chart type ('col', 'bar', 'line', 'pie', 'scatter').
+    :param cell_range: Optional new data source range.
+    :param name: Optional new internal name for the chart object.
+    :param sheet_name: Optional target worksheet name.
+    """
+    session = get_excel_session(__context__)
+    backend = _ensure_active_session_workbook(session, __context__)
+    return backend.update_chart(
+        chart_identifier=chart_identifier,
+        title=title,
+        chart_type=chart_type,
+        cell_range=cell_range,
+        name=name,
+        sheet_name=sheet_name,
+    ).to_json()

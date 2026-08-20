@@ -24,6 +24,7 @@ from cptr.utils.excel.tools import (
     excel_format_range,
     excel_get_sheet_info,
     excel_get_workbook_info,
+    excel_list_charts,
     excel_list_sheets,
     excel_open_workbook,
     excel_read_range,
@@ -32,6 +33,7 @@ from cptr.utils.excel.tools import (
     excel_search_sheet,
     excel_sort_range,
     excel_update_cell,
+    excel_update_chart,
     excel_write_formula,
     excel_write_range,
 )
@@ -59,6 +61,8 @@ EXCEL_TOOLS: dict[str, dict] = {
     "excel_write_formula": {"fn": excel_write_formula, "approval": "allow"},
     "excel_format_range": {"fn": excel_format_range, "approval": "allow"},
     "excel_create_chart": {"fn": excel_create_chart, "approval": "allow"},
+    "excel_list_charts": {"fn": excel_list_charts, "approval": "allow"},
+    "excel_update_chart": {"fn": excel_update_chart, "approval": "allow"},
 }
 
 __all__ = [
@@ -84,6 +88,8 @@ __all__ = [
     "excel_write_formula",
     "excel_format_range",
     "excel_create_chart",
+    "excel_list_charts",
+    "excel_update_chart",
     # Phase 3 Reliability Exports
     "TaskPlan",
     "PlanStep",

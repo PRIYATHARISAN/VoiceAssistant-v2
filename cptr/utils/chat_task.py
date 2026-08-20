@@ -686,11 +686,7 @@ async def reconcile_chat_state():
         if not is_running(msg.id):
             logger.warning("[reconcile] Marking stuck message %s as done", msg.id)
             meta = dict(msg.meta or {})
-            meta["error"] = "interrupted by server restart"
-            await ChatMessage.update(msg.id, done=True, meta=meta)
-            healed_chats.add(msg.chat_id)
-
-    # Resume pending inputs for healed chats.
+        # Resume pending inputs for healed chats.
     for cid in healed_chats:
         chat = await Chat.get_by_id(cid)
         if chat:
@@ -708,15 +704,24 @@ async def reconcile_chat_state():
 
 
 VOICE_MODE_SYSTEM_PROMPT = (
-    "You are Kural AI, a voice assistant with live control over Microsoft Excel. "
-    "When a user asks to open Excel (e.g. 'open Excel', 'Excel open', 'Excel open Pannu', 'open my workbook'), "
-    "or work with cells and sheets, YOU MUST EXECUTE the corresponding tool function (e.g., excel_open_workbook, excel_write_range, excel_create_workbook) "
-    "so that live Microsoft Excel opens on the user's Windows computer. "
-    "If a live workbook was already opened in this conversation, treat it as the current active workbook. "
-    "For follow-up requests such as 'add a column named Students', 'add numbers', 'Book1', or 'work with the existing file', "
-    "use that active workbook and execute the appropriate Excel tool; do not ask for a file path and do not request a new workbook. "
-    "Only create a workbook when the user explicitly asks for a new or blank workbook. "
-    "Respond in the user's preferred language (Tamil, English, or Tamil-English code-switched blend) matching their utterance."
+    "You are Kural AI, a smart, fast voice assistant with live control over Microsoft Excel on Windows.\n\n"
+    "CRITICAL RULES FOR VOICE EXECUTION:\n"
+    "1. SILENT ACTION FIRST: When the user asks for an Excel operation (e.g., open Excel, create workbook, write cells, add columns, calculate sums/averages, format/highlight, create or rename/update charts, save), EXECUTE ALL NECESSARY TOOLS DIRECTLY AND SILENTLY. DO NOT announce plans, describe what tools you will use, or output conversational commentary before/during tool execution.\n"
+    "2. CONCISE FINAL SPOKEN CONFIRMATION: Only speak AFTER all tool operations have completed. Your final response MUST be 1 to 2 short, crisp sentences (e.g., 'Done! Added the Salary column and filled in the salaries.', 'Renamed the bar chart title to age wishes number.', 'Highlighted Column A in green.', or 'Created a bar chart for Column A.'). Do not list step-by-step actions, recite entire tables of data, or use markdown formatting that sounds awkward when spoken.\n"
+    "3. NEVER DUMP GENERIC CAPABILITY MENUS: NEVER output long bulleted menus of things you can do (e.g., 'For example: - Read data, - Write data, - Create charts...'). Maintain focus solely on completing the user's specific intent.\n"
+    "4. ACTIVE CONVERSATION MEMORY & BACK-REFERENCES: When the user says 'do the previous task I have said', 'do that', 'continue', or references a prior turn, inspect recent conversation history, identify the requested action (e.g., renaming a chart, writing a formula, highlighting a column), and EXECUTE IT IMMEDIATELY without asking for repetition or context.\n"
+    "5. CHART MANIPULATION & ZERO-PROMPT AUTO-RANGE: You have full control over Excel charts via excel_create_chart, excel_list_charts, and excel_update_chart. If the user asks to rename or change a chart title (e.g., 'rename the bar chart name as age wishes number'), call excel_update_chart(title='age wishes number') on the active sheet silently. If the user asks to create a chart or put an average/sum formula, inspect the active sheet's data (e.g. A1:A10), apply the chart or formula next to the data range automatically, and do NOT ask the user for cell coordinates.\n"
+    "6. INCOMPLETE / CUT-OFF SPEECH RECOVERY: If a user utterance appears truncated or cut off mid-sentence (e.g., 'instead of bar chart put a', 'put average of', 'for column'), NEVER trigger web searches or dump articles. If the intent is clear from recent context (e.g. changing the existing bar chart to a pie/line chart), execute the change using excel_update_chart or excel_create_chart. If ambiguous, ask in EXACTLY 1 short sentence: 'Which chart type would you like — pie, line, or column?'.\n"
+    "7. SMART CONTEXT DEFAULTS & CONTINUITY: Automatically use the currently active Excel workbook and worksheet without asking. Do not ask for workbook names, sheet names, cell ranges, or confirmations. If an Excel workbook is open, assume it for all subsequent commands and follow-ups.\n"
+    "8. CONVERSATIONAL FOLLOW-UPS & SPEECH-TO-TEXT AWARENESS: Recognize short utterances as answers or refinements to the ongoing task. Note that voice recognition (STT) frequently transcribes 'Column A' as 'a column' or 'column a'. NEVER mistake 'a column' for a request to create a new column—it means Column A! Treat phrases like 'a column', 'column A', 'in B', 'green', 'sum', 'row 2' as direct parameters for the active action and execute immediately.\n"
+    "9. COLLOQUIAL TAMIL & TANGLISH COMPREHENSION: Understand everyday conversational Tamil & Tanglish phrases and respond naturally in 1 short casual sentence:\n"
+    "   - 'Un per enna' / 'UN Peru EN' / 'What is your name' -> 'En peyar Kural, ungaloda voice assistant.'\n"
+    "   - 'Unnale enna panna mudiyum' / 'What can you do' -> 'Excel automation, data analysis, charts, formulas, and general questions-ku naan help pannuven.'\n"
+    "   - 'Saptiya' -> 'Naan AI assistant, enakku sapadu theva illa! Neenga saptengala?'\n"
+    "   - 'Enna pandra' -> 'Ungalukku help panna ready-ah irukken.'\n"
+    "   - 'Eppadi irukku' / 'Eppadi irukkinga' -> 'Naan nalla irukken! Ungalukku enna pannanum?'\n"
+    "   - When asked in Tamil to speak in Tamil ('Tamil la pesu'), acknowledge in 1 short friendly Tamil sentence without long lectures.\n"
+    "10. GRACEFUL ACCURACY: If an action cannot be performed (e.g., Excel is not running or no data exists), explain concisely in 1 sentence without pretending it succeeded (e.g., 'Excel open-la illa; first Excel open pannunga')."
 )
 
 
@@ -729,7 +734,6 @@ async def _apply_voice_mode_system_prompt(system: str, chat_params: dict) -> str
     if not prompt:
         return system
     return f"{system}\n\n[VOICE MODE]\n{prompt}"
-
 
 # ── Title generation ────────────────────────────────────────
 
@@ -2062,6 +2066,7 @@ async def run_chat_task(
         #   auto = run allow tools; review review tools before prompting
         #   full = auto-approve everything
         approval_mode = chat_params.get("tool_approval_mode", "auto")
+        is_voice_mode = chat_params.get("voice_mode") is True
         # Legacy compat: old boolean auto_approve_tools
         if "tool_approval_mode" not in chat_params and "auto_approve_tools" in chat_params:
             approval_mode = "full" if chat_params["auto_approve_tools"] else "auto"
@@ -2373,24 +2378,27 @@ async def run_chat_task(
                     )
                 )
 
+            iteration_text = ""
             async for event in stream:
                 if event["type"] == "text_delta":
-                    content += event["content"]
-                    text_buffer += event["content"]
-                    await emit(delta=event["content"])
-                    if provider_type == "llama.cpp" and usage_context_tokens(last_usage) <= 0:
-                        estimated_context_tokens = estimated_prompt_tokens + estimate_tokens(
-                            content
-                        )
-                        if estimated_context_tokens - last_emitted_context_tokens >= 256:
-                            last_emitted_context_tokens = estimated_context_tokens
-                            await emit(
-                                context_usage=build_context_usage(
-                                    estimated_context_tokens,
-                                    threshold=compact_token_threshold,
-                                )
+                    iteration_text += event["content"]
+                    if not is_voice_mode:
+                        content += event["content"]
+                        text_buffer += event["content"]
+                        await emit(delta=event["content"])
+                        if provider_type == "llama.cpp" and usage_context_tokens(last_usage) <= 0:
+                            estimated_context_tokens = estimated_prompt_tokens + estimate_tokens(
+                                content
                             )
-                    _sync_state()
+                            if estimated_context_tokens - last_emitted_context_tokens >= 256:
+                                last_emitted_context_tokens = estimated_context_tokens
+                                await emit(
+                                    context_usage=build_context_usage(
+                                        estimated_context_tokens,
+                                        threshold=compact_token_threshold,
+                                    )
+                                )
+                        _sync_state()
 
                 elif event["type"] == "tool_call":
                     # Collect tool call — don't execute yet
@@ -2446,6 +2454,13 @@ async def run_chat_task(
                 elif event["type"] == "done":
                     # Stream ended. Usage may have arrived earlier, multiple times, or never.
                     if not pending_calls:
+                        if is_voice_mode:
+                            content += iteration_text
+                            text_buffer += iteration_text
+                            if iteration_text:
+                                await emit(delta=iteration_text)
+                            if not content.strip():
+                                content = "Done! Processed your request in Excel."
                         _flush_text()
                         if streamed_reasoning_chars and not response_reasoning_items:
                             logger.warning(
@@ -2487,6 +2502,10 @@ async def run_chat_task(
 
             # ── Process collected tool calls ────────────────────
             if pending_calls:
+                if is_voice_mode:
+                    content = ""
+                    text_buffer = ""
+                    iteration_text = ""
                 if streamed_reasoning_chars and not response_reasoning_items:
                     logger.warning(
                         "[task %s] reasoning output streamed (%d chars) before tool calls but no completed reasoning item arrived; model continuation will not include reasoning items",
@@ -2783,10 +2802,12 @@ async def run_chat_task(
                 new_messages_since += len(new_messages)
 
                 # Persist after all tool calls
-                await _save_message("tool calls complete", content=content, output=output_items)
+                await _save_message("tool calls complete", content="" if is_voice_mode else content, output=output_items)
                 restart = True
 
             if not restart:
+                if is_voice_mode and not content.strip():
+                    content = "Done! Processed your request in Excel."
                 flushed_item = _flush_text()
                 if flushed_item:
                     await emit(output=flushed_item)
